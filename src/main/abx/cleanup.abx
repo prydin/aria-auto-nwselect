@@ -1,0 +1,10 @@
+---
+exportVersion: "1"
+exportId: "80b83455-fb5b-49ba-8ec0-51f4aa5d40d2"
+name: "Clean up Network Selection (All)"
+runtime: "python"
+entrypoint: "main.handler"
+timeoutSeconds: 600
+deploymentTimeoutSeconds: 900
+actionType: "SCRIPT"
+memoryInMB: 300
