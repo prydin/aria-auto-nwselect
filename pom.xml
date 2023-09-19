@@ -54,7 +54,7 @@
                 <version>1.1.1</version>
                 <executions>
                     <execution>
-                        <id>collect dependencies</id>
+                        <id>collect-dependencies</id>
                         <phase>prepare-package</phase>
                         <goals>
                             <goal>exec</goal>
@@ -65,6 +65,7 @@
                     <executable>pip3</executable>
                     <arguments>
                         <argument>install</argument>
+                        <argument>--upgrade</argument>
                         <argument>-r</argument>
                         <argument>requirements.txt</argument>
                         <argument>--target=target/python/nwselect</argument>
@@ -85,19 +86,6 @@
                         <configuration>
                             <descriptor>src/main/python/nwselect/assembly.xml</descriptor>
                             <finalName>nwselect</finalName>
-                            <outputDirectory>${project.build.directory}/actions</outputDirectory>
-                            <appendAssemblyId>false</appendAssemblyId>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <phase>prepare-package</phase>
-                        <id>cleanup</id>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptor>src/main/python/cleanup/assembly.xml</descriptor>
-                            <finalName>cleanup</finalName>
                             <outputDirectory>${project.build.directory}/actions</outputDirectory>
                             <appendAssemblyId>false</appendAssemblyId>
                         </configuration>

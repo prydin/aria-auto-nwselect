@@ -1,7 +1,7 @@
 ---
 exportVersion: "1"
 exportId: "1232c505-5468-4952-a4fe-e375ac46c871"
-name: "Select Network (All)"
+name: "Select Network"
 runtime: "python"
 entrypoint: "main.handler"
 timeoutSeconds: 600

@@ -5,10 +5,9 @@ from functools import reduce
 import requests
 import requests.auth
 import re
-
 import yaml
 
-MAX_USAGE = 100
+DEBUG = False
 
 
 def dump(data):
@@ -16,32 +15,38 @@ def dump(data):
 
 
 def get(context, url):
-    print("GET", url, end="")
+    if DEBUG:
+        print("GET", url, end="")
     t = time.time()
     r = context.request(url, "GET", "")
     if r["status"] < 200 or r["status"] > 299:
         raise Exception('HTTP error %d: %s' % (r["status"], r["content"]))
-    print(" (%fs)" % (time.time() - t))
+    if DEBUG:
+        print(" (%fs)" % (time.time() - t))
     return json.loads(r["content"])
 
 
 def patch(context, url, data):
-    print("PATCH", url, end="")
+    if DEBUG:
+        print("PATCH", url, end="")
     t = time.time()
     r = context.request(url, "PATCH", json.dumps(data))
     if r["status"] < 200 or r["status"] > 299:
         raise Exception('HTTP error %d: %s' % (r["status"], r["content"]))
-    print(" (%fs)" % (time.time() - t))
+    if DEBUG:
+        print(" (%fs)" % (time.time() - t))
     return json.loads(r["content"])
 
 
 def post(context, url, data):
-    print("POST", url, end="")
+    if DEBUG:
+        print("POST", url, end="")
     t = time.time()
     r = context.request(url, "POST", json.dumps(data))
     if r["status"] < 200 or r["status"] > 299:
         raise Exception('HTTP error %d: %s' % (r["status"], r["content"]))
-    print(" (%fs)" % (time.time() - t))
+    if DEBUG:
+        print(" (%fs)" % (time.time() - t))
     return json.loads(r["content"])
 
 
@@ -56,9 +61,11 @@ def mkfilter(query):
     return "$filter=(" + quote(query, safe="*") + ")"
 
 
+# Cache of IP counts. Used only during a single invocation
 cache = {}
 
 
+# Returns the number of free IP addresses based on IPAM data
 def get_available_ips(context, inputs, subnet):
     n = cache.get(subnet, None)
     if n:
@@ -77,15 +84,19 @@ def get_available_ips(context, inputs, subnet):
         total = end_ip - start_ip
         range_link = ip_range['documentSelfLink']
         free_ips = -1
+
+        # Use external IP if configured
         if "ipamUser" and "ipamHost" and "ipamPassword" in inputs:
             ipam_url = "https://" + inputs["ipamHost"] + "/wapi/v2.10.5/" + quote(ip_range["id"]) + \
                     "?_return_fields%2b=utilization"
             ipam_auth = requests.auth.HTTPBasicAuth(username=inputs["ipamUser"],
                                                  password=context.getSecret(inputs["ipamPassword"]))
-            print("GET", ipam_url, end="")
-            t = time.time()
+            if DEBUG:
+                print("GET", ipam_url, end="")
+                t = time.time()
             result = requests.get(ipam_url, auth=ipam_auth, verify=False)
-            print(" (%fs)" % (time.time() - t))
+            if DEBUG:
+                print(" (%fs)" % (time.time() - t))
             if result.status_code != 200:
                 # Handle this gracefully. We'll use cached data instead
                 print("HTTP error %d: %s" % (result.status_code, result.content))
@@ -93,6 +104,9 @@ def get_available_ips(context, inputs, subnet):
                 ipam_record = result.json()
                 print("Determined free IPs using live external IPAM data")
                 free_ips = (1.0 - float(ipam_record["utilization"]) / 1000) * total
+
+        # If we still don't have a value for free_ips, we either didn't have an external IPAM configured,
+        # or the call to the IPAM failed. Fall back to the internal number in vRA. This could be unreliable.
         if free_ips == -1:
             if "customProperties" in ip_range and "freeIps" in ip_range["customProperties"]:
                 # If we got a snapshot free IP count back from an external IPAM we use it,
@@ -111,7 +125,7 @@ def get_available_ips(context, inputs, subnet):
         total_free_ips += free_ips
         print("Range %s (subnet %s) has %d total and %d free" % (ip_range['name'], subnet, total, free_ips))
     cache[subnet] = total_free_ips
-    print("Total free IPs for subnet %s is %d" % (ip_range["name"], total_free_ips))
+    print("*** Total free IPs for subnet %s is %d" % (ip_range["name"], total_free_ips))
     return total_free_ips
 
 
@@ -183,33 +197,14 @@ def handler(context, inputs):
         vm = selections[vm_idx]
         for nic_idx in range(len(vm)):
             nic = vm[nic_idx]
-            # Have we already picked a network for this?
-            nw_key = dep_id + "|" + component_id + "|" + str(nic_idx)
-            selected_nw = get(context, "/iaas/api/fabric-networks?" +
-                              mkfilter("expandedTags.item.tag eq '__fitsResource*%s'" % nw_key))
+            print("Possible networks:" + json.dumps(nic))
 
-            # We've already assigned a best network for this resource. Use it!
-            if len(selected_nw["content"]) != 0:
-                best = selected_nw["content"][0]["id"]
-                print("Selected network based on previous selection")
-            else:
-                print("Selecting network based on IP address range")
-                print("Possible networks:" + json.dumps(nic))
-                best = reduce(lambda a, b:
-                              a if get_available_ips(context, inputs, a) > get_available_ips(context, inputs, b) else b,
-                              nic)
+            # Determine the network with the most available addresses
+            best = reduce(lambda a, b:
+                          a if get_available_ips(context, inputs, a) > get_available_ips(context, inputs, b) else b,
+                          nic)
 
-                # Tag the network as suitable for this VM, but only if network was explicitly identified
-                if has_networks(bp, component_id):
-                    payload = {
-                        "resourceLink": "/resources/sub-networks/" + best,
-                        "tagsToAssign": [{"key": "__fitsResource", "value": nw_key}],
-                        "tagsToUnassign": []
-                    }
-                    post(context, "/provisioning/uerp/provisioning/mgmt/tag-assignment", payload)
-
-            # We need to maintain the same number of networks in the selection, so we reshuffle
-            # 'subnets' to have the best network as its first element.
+            # Create a new list with a single network, i.e. the one with the most IP addresses
             nic[:] = [best]
             free = get_available_ips(context, inputs, nic[0])
             print("Best subnet is %s with %d free IPs" % (nic[0], free))
