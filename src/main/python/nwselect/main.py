@@ -9,10 +9,13 @@ import yaml
 
 DEBUG = False
 
+ipv4pattern = re.compile(r"^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$")
 
 def dump(data):
     print(json.dumps(data, indent=4))
 
+def is_valid_ipv4(s):
+    return ipv4pattern.match(s)
 
 def get(context, url):
     if DEBUG:
@@ -81,6 +84,9 @@ def get_available_ips(context, inputs, subnet):
     for ip_range in ip_range_envelope['documents'].values():
         start_ip = ip_to_int(ip_range['startIPAddress'])
         end_ip = ip_to_int(ip_range['endIPAddress'])
+        if not is_valid_ipv4(start_ip) or not is_valid_ipv4(end_ip):
+            print(f"{start_ip}-{end_ip} does not appear to be a valid IPv4 address. Skipping.")
+            continue
         total = end_ip - start_ip
         range_link = ip_range['documentSelfLink']
         free_ips = -1
